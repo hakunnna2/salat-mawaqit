@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 server/push-subscribers.json
+
+# Local Netlify folder
+.netlify
