@@ -1,0 +1,8 @@
+{
+  "name": "Salat Mawaqit",
+  "description": "A modern, installable prayer times application with geolocation, notifications, and offline support.",
+  "requestFramePermissions": [
+    "geolocation",
+    "notifications"
+  ]
+}

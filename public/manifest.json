@@ -1,0 +1,32 @@
+{
+  "name": "Salat Mawaqit",
+  "short_name": "Salat",
+  "description": "Islamic Prayer Times Application",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f0",
+  "theme_color": "#5A5A40",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/mosque/192/192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://picsum.photos/seed/mosque/512/512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Widget View",
+      "short_name": "Widget",
+      "description": "Open the ultra-compact prayer widget",
+      "url": "/?view=widget",
+      "icons": [{ "src": "https://picsum.photos/seed/widget/192/192", "sizes": "192x192" }]
+    }
+  ]
+}
