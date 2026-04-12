@@ -51,10 +51,10 @@ const resources = {
       "countdown_suffix": "remaining",
       "city_placeholder": "Enter city name...",
       "city_not_found": "City not found",
-      "change_city": "Change city",
+      "change_city": "Search city name",
       "search_failed": "Search failed",
       "search": "Search",
-      "searching_cities": "Searching cities...",
+      "searching_cities": "Searching city names...",
       "retry_location": "Try detecting location again"
     }
   },
@@ -107,10 +107,10 @@ const resources = {
       "countdown_suffix": "restant",
       "city_placeholder": "Entrez le nom de la ville...",
       "city_not_found": "Ville introuvable",
-      "change_city": "Changer de ville",
+      "change_city": "Rechercher une ville",
       "search_failed": "Échec de la recherche",
       "search": "Rechercher",
-      "searching_cities": "Recherche des villes...",
+      "searching_cities": "Recherche par nom de ville...",
       "retry_location": "Réessayer de détecter la localisation"
     }
   },
@@ -163,10 +163,10 @@ const resources = {
       "countdown_suffix": "متبقي",
       "city_placeholder": "أدخل اسم المدينة...",
       "city_not_found": "لم يتم العثور على المدينة",
-      "change_city": "تغيير المدينة",
+      "change_city": "ابحث عن اسم مدينة",
       "search_failed": "فشل البحث",
       "search": "بحث",
-      "searching_cities": "جارٍ البحث عن المدن...",
+      "searching_cities": "جارٍ البحث باسم المدينة...",
       "retry_location": "حاول اكتشاف الموقع مرة أخرى"
     }
   }
