@@ -168,6 +168,8 @@ async function sendDuePrayerNotifications() {
         body: `${prayerLabel(duePrayer.name, config.language)} - Time now`,
         prayerName: duePrayer.name,
         at: duePrayer.prayerDate.toISOString(),
+        icon: '/icon.png',
+        badge: '/icon.png',
       };
 
       await webpush.sendNotification(entry.subscription, JSON.stringify(payload));

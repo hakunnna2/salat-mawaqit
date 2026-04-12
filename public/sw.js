@@ -204,6 +204,8 @@ self.addEventListener('push', (event) => {
       tag: payload.tag || 'salat-reminder',
       data: payload,
       renotify: true,
+      icon: '/icon.png',
+      badge: '/icon.png',
     })
   );
 });

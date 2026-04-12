@@ -54,6 +54,7 @@ const PRAYER_OFFSETS_STORAGE_KEY = 'salat_mawaqit_prayer_offsets';
 const PINNED_COUNTDOWN_TAG = 'next-prayer-countdown';
 const DEFAULT_FALLBACK_LOCATION: LocationData = { latitude: 33.5731, longitude: -7.5898, city: 'Casablanca' };
 const PUSH_API_BASE = (import.meta.env.VITE_PUSH_API_BASE || '').replace(/\/$/, '');
+const NOTIFICATION_ICON = '/icon.png';
 const DEFAULT_PRAYER_OFFSETS: PrayerOffsets = {
   Fajr: 0,
   Dhuhr: 0,
@@ -700,6 +701,8 @@ export default function App() {
       tag: PINNED_COUNTDOWN_TAG,
       requireInteraction: true,
       silent: true,
+      icon: NOTIFICATION_ICON,
+      badge: NOTIFICATION_ICON,
     });
   }, [countdown, nextPrayer, notificationsEnabled, t]);
 
@@ -1030,6 +1033,10 @@ export default function App() {
 
               {qiblaInfo ? (
                 <>
+                  <p className="text-sm font-medium mb-4 text-[#5A5A40]/80">
+                    {t('qibla_how_to')}
+                  </p>
+
                   <div className="flex items-center justify-center gap-2 mb-4">
                     <button
                       onClick={requestCompass}
@@ -1054,14 +1061,27 @@ export default function App() {
                   )}
 
                   <div className="mx-auto w-56 h-56 rounded-full border-4 border-[#5A5A40]/10 relative flex items-center justify-center mb-6">
-                    <div className="absolute top-3 text-[10px] font-bold opacity-40">N</div>
+                    <div className="absolute top-3 text-[10px] font-bold opacity-40">{t('north_short')}</div>
+                    <div
+                      className="absolute text-[10px] font-bold text-[#5A5A40] bg-[#5A5A40]/10 px-2 py-1 rounded-full"
+                      style={{
+                        transform: `translate(-50%, -50%) rotate(${qiblaInfo.bearing}deg) translateY(-82px) rotate(-${qiblaInfo.bearing}deg)`,
+                      }}
+                    >
+                      {t('qibla_tab')}
+                    </div>
                     <motion.div
                       animate={{ rotate: qiblaInfo.bearing - (compassHeading ?? 0) }}
                       transition={{ type: 'spring', stiffness: 120, damping: 18 }}
                       className="w-0 h-0 border-l-[14px] border-r-[14px] border-b-[90px] border-l-transparent border-r-transparent border-b-[#5A5A40]"
                     />
+                    <div className="absolute bottom-5 text-[10px] font-bold opacity-40">{t('qibla_target')}</div>
                     <div className="absolute w-3 h-3 rounded-full bg-[#5A5A40]" />
                   </div>
+
+                  <p className="text-xs opacity-60 mb-2">
+                    {t('qibla_tip')}
+                  </p>
 
                   <p className="text-sm opacity-70 mb-1">
                     {t('qibla_bearing')}: <span className="font-bold text-[#5A5A40]">{qiblaInfo.bearing} deg</span>
