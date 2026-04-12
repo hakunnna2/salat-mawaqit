@@ -19,6 +19,7 @@ interface PushConfig {
   location: LocationData | null;
   method: number;
   prayerOffsets: PrayerOffsets;
+  reminderMinutes: number;
   language: string;
   notificationsEnabled: boolean;
 }
@@ -28,6 +29,7 @@ interface StoredSubscriber {
   subscription: webpush.PushSubscription;
   config: PushConfig;
   lastNotificationKey?: string;
+  lastComingNotificationKey?: string;
   updatedAt: number;
 }
 
@@ -43,6 +45,7 @@ const DEFAULT_CONFIG: PushConfig = {
     Maghrib: 0,
     Isha: 0,
   },
+  reminderMinutes: 10,
   language: 'fr',
   notificationsEnabled: true,
 };
@@ -145,14 +148,46 @@ async function sendDuePrayerNotifications() {
       if (!timings) continue;
 
       let duePrayer: { name: SalatName; prayerDate: Date } | null = null;
+      let comingPrayer: { name: SalatName; prayerDate: Date; minutesLeft: number } | null = null;
+      const reminderMinutes = Math.max(1, Number(config.reminderMinutes || 10));
+      const reminderMs = reminderMinutes * 60_000;
+
       for (const prayerName of SALAT_NAMES) {
         const basePrayerTime = parseApiTime(timings[prayerName], now);
         const adjusted = new Date(basePrayerTime.getTime() + (config.prayerOffsets?.[prayerName] || 0) * 60_000);
         const diffMs = Math.abs(now.getTime() - adjusted.getTime());
+        const msUntilPrayer = adjusted.getTime() - now.getTime();
+
+        if (!comingPrayer && msUntilPrayer > 0 && msUntilPrayer <= reminderMs) {
+          comingPrayer = {
+            name: prayerName,
+            prayerDate: adjusted,
+            minutesLeft: Math.max(1, Math.ceil(msUntilPrayer / 60_000)),
+          };
+        }
 
         if (diffMs <= 60_000) {
           duePrayer = { name: prayerName, prayerDate: adjusted };
           break;
+        }
+      }
+
+      if (comingPrayer) {
+        const comingKey = `${comingPrayer.prayerDate.toISOString().slice(0, 16)}-${comingPrayer.name}-coming`;
+        if (entry.lastComingNotificationKey !== comingKey) {
+          const comingPayload = {
+            title: 'Salat Mawaqit',
+            body: `${prayerLabel(comingPrayer.name, config.language)} - in ${comingPrayer.minutesLeft} min`,
+            prayerName: comingPrayer.name,
+            at: comingPrayer.prayerDate.toISOString(),
+            icon: '/notification-icon.svg',
+            badge: '/notification-badge.svg',
+            tag: `prayer-coming-${comingKey}`,
+          };
+
+          await webpush.sendNotification(entry.subscription, JSON.stringify(comingPayload));
+          entry.lastComingNotificationKey = comingKey;
+          changed = true;
         }
       }
 
@@ -238,6 +273,7 @@ app.post('/api/push/subscribe', (req, res) => {
       },
     },
     lastNotificationKey: subscribers[subscription.endpoint]?.lastNotificationKey,
+    lastComingNotificationKey: subscribers[subscription.endpoint]?.lastComingNotificationKey,
     updatedAt: Date.now(),
   };
 

@@ -65,10 +65,30 @@ async function checkPrayerNotifications() {
     }
 
     const timings = data.data.timings;
+    const reminderMinutes = Math.max(1, Number(config.reminderMinutes || 10));
+    const reminderMs = reminderMinutes * 60 * 1000;
+
     for (const name of SALAT_NAMES) {
       const offset = Number(config.prayerOffsets?.[name] || 0);
       const prayerDate = parseApiTime(timings[name], now);
       prayerDate.setMinutes(prayerDate.getMinutes() + offset);
+
+      const msUntilPrayer = prayerDate.getTime() - now.getTime();
+      if (msUntilPrayer > 0 && msUntilPrayer <= reminderMs) {
+        const comingKey = `${prayerDate.toISOString().slice(0, 16)}-${name}-coming`;
+        const lastComing = await readMeta('last-prayer-coming-notification');
+        if (lastComing?.key !== comingKey) {
+          const minutesLeft = Math.max(1, Math.ceil(msUntilPrayer / (60 * 1000)));
+          await self.registration.showNotification('Salat Mawaqit', {
+            body: `${prayerLabel(name, config.language)} - in ${minutesLeft} min`,
+            tag: `prayer-coming-${comingKey}`,
+            icon: '/notification-icon.svg',
+            badge: '/notification-badge.svg',
+            renotify: true,
+          });
+          await writeMeta('last-prayer-coming-notification', { key: comingKey });
+        }
+      }
 
       const diff = Math.abs(now.getTime() - prayerDate.getTime());
       if (diff > 60 * 1000) {

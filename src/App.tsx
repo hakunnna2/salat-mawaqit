@@ -65,6 +65,7 @@ const DEFAULT_FALLBACK_LOCATION: LocationData = { latitude: 33.5731, longitude: 
 const PUSH_API_BASE = (import.meta.env.VITE_PUSH_API_BASE || '').replace(/\/$/, '');
 const NOTIFICATION_ICON = '/notification-icon.svg';
 const NOTIFICATION_BADGE = '/notification-badge.svg';
+const PRAYER_REMINDER_MINUTES = 10;
 const DEFAULT_PRAYER_OFFSETS: PrayerOffsets = {
   Fajr: 0,
   Dhuhr: 0,
@@ -329,6 +330,14 @@ export default function App() {
     return parts.join(', ');
   }, []);
 
+  const normalizeSearchText = useCallback((value: string) => {
+    return value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  }, []);
+
   const applyCitySuggestion = useCallback((city: CitySuggestion) => {
     setLocation({
       latitude: city.latitude,
@@ -357,10 +366,24 @@ export default function App() {
         const data = await response.json();
         const results = (data?.results || []) as CitySuggestion[];
 
+        const normalizedQuery = normalizeSearchText(query);
+        const rank = (city: CitySuggestion) => {
+          const name = normalizeSearchText(city.name || '');
+          const label = normalizeSearchText(formatCityLabel(city));
+          let score = 0;
+
+          if (name === normalizedQuery) score += 120;
+          if (name.startsWith(normalizedQuery)) score += 90;
+          if (name.includes(normalizedQuery)) score += 60;
+          if (label.includes(normalizedQuery)) score += 40;
+          if (city.country_code === 'MA') score += 30;
+          return score;
+        };
+
         const sorted = [...results].sort((a, b) => {
-          if (a.country_code === 'MA' && b.country_code !== 'MA') return -1;
-          if (a.country_code !== 'MA' && b.country_code === 'MA') return 1;
-          return 0;
+          const diff = rank(b) - rank(a);
+          if (diff !== 0) return diff;
+          return (a.name || '').localeCompare(b.name || '');
         });
 
         setCitySuggestions(sorted.slice(0, 6));
@@ -375,7 +398,7 @@ export default function App() {
     return () => {
       clearTimeout(timer);
     };
-  }, [citySearch, extractCoordinatesInput, i18n.language]);
+  }, [citySearch, extractCoordinatesInput, formatCityLabel, i18n.language, normalizeSearchText]);
 
   const handleCitySearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -759,6 +782,7 @@ export default function App() {
           location,
           method,
           prayerOffsets,
+          reminderMinutes: PRAYER_REMINDER_MINUTES,
           language: i18n.language,
           notificationsEnabled: true,
         },
@@ -856,6 +880,7 @@ export default function App() {
           location,
           method,
           prayerOffsets,
+          reminderMinutes: PRAYER_REMINDER_MINUTES,
           language: i18n.language,
           notificationsEnabled,
         },
