@@ -37,6 +37,15 @@ interface LocationData {
   city?: string;
 }
 
+interface CitySuggestion {
+  name: string;
+  admin1?: string;
+  country?: string;
+  country_code?: string;
+  latitude: number;
+  longitude: number;
+}
+
 type LocationPermissionState = 'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown';
 type LocationMode = 'auto' | 'manual';
 type PrayerOffsets = Record<SalatName, number>;
@@ -172,6 +181,8 @@ export default function App() {
   const [compassError, setCompassError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [citySearch, setCitySearch] = useState('');
+  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
+  const [isCitySearchLoading, setIsCitySearchLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [isDetecting, setIsDetecting] = useState(false);
 
@@ -291,6 +302,81 @@ export default function App() {
     };
   }, []);
 
+  const extractCoordinatesInput = useCallback((input: string): { latitude: number; longitude: number } | null => {
+    const decoded = decodeURIComponent(input);
+    const patterns = [
+      /@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/,
+      /\/place\/(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/,
+      /(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/,
+    ];
+
+    for (const pattern of patterns) {
+      const match = decoded.match(pattern);
+      if (!match) continue;
+
+      const latitude = Number(match[1]);
+      const longitude = Number(match[2]);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180) {
+        return { latitude, longitude };
+      }
+    }
+
+    return null;
+  }, []);
+
+  const formatCityLabel = useCallback((city: CitySuggestion) => {
+    const parts = [city.name, city.admin1, city.country].filter(Boolean);
+    return parts.join(', ');
+  }, []);
+
+  const applyCitySuggestion = useCallback((city: CitySuggestion) => {
+    setLocation({
+      latitude: city.latitude,
+      longitude: city.longitude,
+      city: formatCityLabel(city),
+    });
+    setCitySearch('');
+    setCitySuggestions([]);
+    setError(null);
+  }, [formatCityLabel]);
+
+  useEffect(() => {
+    const query = citySearch.trim();
+    if (query.length < 2 || extractCoordinatesInput(query)) {
+      setCitySuggestions([]);
+      setIsCitySearchLoading(false);
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      setIsCitySearchLoading(true);
+      try {
+        const response = await fetch(
+          `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=8&language=${i18n.language}&format=json`
+        );
+        const data = await response.json();
+        const results = (data?.results || []) as CitySuggestion[];
+
+        const sorted = [...results].sort((a, b) => {
+          if (a.country_code === 'MA' && b.country_code !== 'MA') return -1;
+          if (a.country_code !== 'MA' && b.country_code === 'MA') return 1;
+          return 0;
+        });
+
+        setCitySuggestions(sorted.slice(0, 6));
+      } catch (err) {
+        console.error('City autocomplete failed', err);
+        setCitySuggestions([]);
+      } finally {
+        setIsCitySearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [citySearch, extractCoordinatesInput, i18n.language]);
+
   const handleCitySearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!citySearch.trim()) return;
@@ -298,29 +384,7 @@ export default function App() {
     try {
       const normalizedCity = citySearch.trim();
 
-      const extractCoordinates = (input: string): { latitude: number; longitude: number } | null => {
-        const decoded = decodeURIComponent(input);
-        const patterns = [
-          /@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/,
-          /\/place\/(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/,
-          /(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/,
-        ];
-
-        for (const pattern of patterns) {
-          const match = decoded.match(pattern);
-          if (!match) continue;
-
-          const latitude = Number(match[1]);
-          const longitude = Number(match[2]);
-          if (Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180) {
-            return { latitude, longitude };
-          }
-        }
-
-        return null;
-      };
-
-      const coordinates = extractCoordinates(normalizedCity);
+      const coordinates = extractCoordinatesInput(normalizedCity);
       if (coordinates) {
         setLocation({
           latitude: coordinates.latitude,
@@ -328,7 +392,17 @@ export default function App() {
           city: t('pinned_location'),
         });
         setCitySearch('');
+        setCitySuggestions([]);
         setError(null);
+        return;
+      }
+
+      const exactSuggestion = citySuggestions.find((s) =>
+        formatCityLabel(s).toLowerCase() === normalizedCity.toLowerCase() ||
+        s.name.toLowerCase() === normalizedCity.toLowerCase()
+      );
+      if (exactSuggestion) {
+        applyCitySuggestion(exactSuggestion);
         return;
       }
 
@@ -354,6 +428,7 @@ export default function App() {
             city: preferred.name || normalizedCity,
           });
           setCitySearch('');
+          setCitySuggestions([]);
           setError(null);
           return;
         }
@@ -370,6 +445,7 @@ export default function App() {
             city: normalizedCity,
           });
           setCitySearch('');
+          setCitySuggestions([]);
           setError(null);
           return;
         }
@@ -938,7 +1014,10 @@ export default function App() {
                   <input
                     type="text"
                     value={citySearch}
-                    onChange={(e) => setCitySearch(e.target.value)}
+                    onChange={(e) => {
+                      setCitySearch(e.target.value);
+                      setError(null);
+                    }}
                     placeholder={t('city_placeholder')}
                     className="w-full px-6 py-4 bg-[#f5f5f0] border border-[#5A5A40]/5 rounded-2xl text-sm focus:outline-none focus:border-[#5A5A40]/20 transition-all"
                   />
@@ -949,6 +1028,32 @@ export default function App() {
                     {t('search')}
                   </button>
                 </form>
+
+                {citySearch.trim().length >= 2 && (
+                  <div className="text-left mb-4">
+                    {isCitySearchLoading && (
+                      <p className="text-xs opacity-60 px-2 py-1">{t('searching_cities')}</p>
+                    )}
+                    {citySuggestions.length > 0 && (
+                      <div className="max-h-48 overflow-y-auto bg-[#f5f5f0] border border-[#5A5A40]/10 rounded-xl p-1">
+                        {citySuggestions.map((city) => {
+                          const cityLabel = formatCityLabel(city);
+                          return (
+                            <button
+                              key={`${city.latitude}-${city.longitude}-${cityLabel}`}
+                              type="button"
+                              onClick={() => applyCitySuggestion(city)}
+                              className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/80 transition-colors"
+                            >
+                              <p className="text-xs font-semibold text-[#5A5A40]">{city.name}</p>
+                              <p className="text-[11px] opacity-60">{cityLabel}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {locationMode === 'auto' ? (
                   <button 
@@ -982,7 +1087,10 @@ export default function App() {
                 <input
                   type="text"
                   value={citySearch}
-                  onChange={(e) => setCitySearch(e.target.value)}
+                  onChange={(e) => {
+                    setCitySearch(e.target.value);
+                    setError(null);
+                  }}
                   placeholder={t('city_placeholder')}
                   className="w-full px-4 py-3 bg-[#f5f5f0] border border-[#5A5A40]/5 rounded-xl text-sm focus:outline-none focus:border-[#5A5A40]/20 transition-all"
                 />
@@ -993,6 +1101,32 @@ export default function App() {
                   {t('search')}
                 </button>
               </form>
+
+              {citySearch.trim().length >= 2 && (
+                <div className="text-left mt-3">
+                  {isCitySearchLoading && (
+                    <p className="text-xs opacity-60 px-2 py-1">{t('searching_cities')}</p>
+                  )}
+                  {citySuggestions.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto bg-[#f5f5f0] border border-[#5A5A40]/10 rounded-xl p-1">
+                      {citySuggestions.map((city) => {
+                        const cityLabel = formatCityLabel(city);
+                        return (
+                          <button
+                            key={`${city.latitude}-${city.longitude}-${cityLabel}`}
+                            type="button"
+                            onClick={() => applyCitySuggestion(city)}
+                            className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/80 transition-colors"
+                          >
+                            <p className="text-xs font-semibold text-[#5A5A40]">{city.name}</p>
+                            <p className="text-[11px] opacity-60">{cityLabel}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

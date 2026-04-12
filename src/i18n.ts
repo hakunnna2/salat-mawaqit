@@ -54,6 +54,7 @@ const resources = {
       "change_city": "Change city",
       "search_failed": "Search failed",
       "search": "Search",
+      "searching_cities": "Searching cities...",
       "retry_location": "Try detecting location again"
     }
   },
@@ -109,6 +110,7 @@ const resources = {
       "change_city": "Changer de ville",
       "search_failed": "Échec de la recherche",
       "search": "Rechercher",
+      "searching_cities": "Recherche des villes...",
       "retry_location": "Réessayer de détecter la localisation"
     }
   },
@@ -164,6 +166,7 @@ const resources = {
       "change_city": "تغيير المدينة",
       "search_failed": "فشل البحث",
       "search": "بحث",
+      "searching_cities": "جارٍ البحث عن المدن...",
       "retry_location": "حاول اكتشاف الموقع مرة أخرى"
     }
   }
