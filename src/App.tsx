@@ -54,7 +54,8 @@ const PRAYER_OFFSETS_STORAGE_KEY = 'salat_mawaqit_prayer_offsets';
 const PINNED_COUNTDOWN_TAG = 'next-prayer-countdown';
 const DEFAULT_FALLBACK_LOCATION: LocationData = { latitude: 33.5731, longitude: -7.5898, city: 'Casablanca' };
 const PUSH_API_BASE = (import.meta.env.VITE_PUSH_API_BASE || '').replace(/\/$/, '');
-const NOTIFICATION_ICON = '/icon.png';
+const NOTIFICATION_ICON = '/notification-icon.svg';
+const NOTIFICATION_BADGE = '/notification-badge.svg';
 const DEFAULT_PRAYER_OFFSETS: PrayerOffsets = {
   Fajr: 0,
   Dhuhr: 0,
@@ -565,7 +566,7 @@ export default function App() {
 
     const y = Math.sin(deltaLon);
     const x = Math.cos(lat1) * Math.tan(lat2) - Math.sin(lat1) * Math.cos(deltaLon);
-    const bearing = (toDeg(Math.atan2(y, x)) + 360) % 360;
+    const bearing = (toDeg(Math.atan2(y, x)) + 180 + 360) % 360;
 
     const dLat = lat2 - lat1;
     const dLon = lon2 - lon1;
@@ -702,7 +703,7 @@ export default function App() {
       requireInteraction: true,
       silent: true,
       icon: NOTIFICATION_ICON,
-      badge: NOTIFICATION_ICON,
+      badge: NOTIFICATION_BADGE,
     });
   }, [countdown, nextPrayer, notificationsEnabled, t]);
 
