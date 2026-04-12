@@ -39,29 +39,26 @@ interface LocationData {
 
 type LocationPermissionState = 'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown';
 type LocationMode = 'auto' | 'manual';
+type PrayerOffsets = Record<SalatName, number>;
 
 // --- Constants ---
 const PRAYER_NAMES = ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'] as const;
 type PrayerName = typeof PRAYER_NAMES[number];
+const SALAT_NAMES = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'] as const;
+type SalatName = typeof SALAT_NAMES[number];
+const HABOUS_METHOD_ID = 21;
 const LOCATION_STORAGE_KEY = 'salat_mawaqit_location';
 const LOCATION_MODE_STORAGE_KEY = 'salat_mawaqit_location_mode';
+const PRAYER_OFFSETS_STORAGE_KEY = 'salat_mawaqit_prayer_offsets';
+const PINNED_COUNTDOWN_TAG = 'next-prayer-countdown';
 const DEFAULT_FALLBACK_LOCATION: LocationData = { latitude: 33.5731, longitude: -7.5898, city: 'Casablanca' };
-
-const CALC_METHODS = [
-  { id: 3, name: 'Muslim World League' },
-  { id: 2, name: 'Islamic Society of North America (ISNA)' },
-  { id: 4, name: 'Umm Al-Qura University, Makkah' },
-  { id: 5, name: 'Egyptian General Authority of Survey' },
-  { id: 8, name: 'Gulf Region' },
-  { id: 10, name: 'Qatar' },
-  { id: 11, name: 'Majlis Ugama Islam Singapura, Singapore' },
-  { id: 12, name: 'Union Isamique de France' },
-  { id: 13, name: 'Diyanet İşleri Başkanlığı, Turkey' },
-  { id: 14, name: 'Spiritual Administration of Muslims of Russia' },
-  { id: 15, name: 'Moonsighting Committee Worldwide' },
-  { id: 16, name: 'Dubai' },
-  { id: 99, name: 'Morocco (Habous)' }, // Custom for Morocco
-];
+const DEFAULT_PRAYER_OFFSETS: PrayerOffsets = {
+  Fajr: 0,
+  Dhuhr: 0,
+  Asr: 0,
+  Maghrib: 0,
+  Isha: 0,
+};
 
 // --- Components ---
 
@@ -147,9 +144,22 @@ export default function App() {
     return storedMode === 'manual' ? 'manual' : 'auto';
   });
   const [times, setTimes] = useState<PrayerTimes | null>(null);
-  const [method, setMethod] = useState(99); // Default Morocco
+  const [prayerOffsets, setPrayerOffsets] = useState<PrayerOffsets>(() => {
+    try {
+      const stored = localStorage.getItem(PRAYER_OFFSETS_STORAGE_KEY);
+      if (!stored) return DEFAULT_PRAYER_OFFSETS;
+      const parsed = JSON.parse(stored) as Partial<PrayerOffsets>;
+      return {
+        ...DEFAULT_PRAYER_OFFSETS,
+        ...parsed,
+      };
+    } catch {
+      return DEFAULT_PRAYER_OFFSETS;
+    }
+  });
+  const method = HABOUS_METHOD_ID;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(Notification.permission === 'granted');
   const [currentTime, setCurrentTime] = useState(new Date());
   const [error, setError] = useState<string | null>(null);
   const [citySearch, setCitySearch] = useState('');
@@ -219,6 +229,26 @@ export default function App() {
   }, [locationMode]);
 
   useEffect(() => {
+    localStorage.setItem(PRAYER_OFFSETS_STORAGE_KEY, JSON.stringify(prayerOffsets));
+  }, [prayerOffsets]);
+
+  const normalizeApiTime = useCallback((value: string) => {
+    return value.split(' ')[0]?.trim() || value;
+  }, []);
+
+  const getAdjustedPrayerTime = useCallback((name: PrayerName, value: string) => {
+    const normalized = normalizeApiTime(value);
+    if (!SALAT_NAMES.includes(name as SalatName)) {
+      return normalized;
+    }
+
+    const now = new Date();
+    const base = parse(`${format(now, 'yyyy-MM-dd')} ${normalized}`, 'yyyy-MM-dd HH:mm', now);
+    const shifted = addMinutes(base, prayerOffsets[name as SalatName]);
+    return format(shifted, 'HH:mm');
+  }, [normalizeApiTime, prayerOffsets]);
+
+  useEffect(() => {
     const stored = getStoredLocation();
     if (stored) {
       setLocation(stored);
@@ -258,6 +288,41 @@ export default function App() {
     
     try {
       const normalizedCity = citySearch.trim();
+
+      const extractCoordinates = (input: string): { latitude: number; longitude: number } | null => {
+        const decoded = decodeURIComponent(input);
+        const patterns = [
+          /@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/,
+          /\/place\/(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/,
+          /(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/,
+        ];
+
+        for (const pattern of patterns) {
+          const match = decoded.match(pattern);
+          if (!match) continue;
+
+          const latitude = Number(match[1]);
+          const longitude = Number(match[2]);
+          if (Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180) {
+            return { latitude, longitude };
+          }
+        }
+
+        return null;
+      };
+
+      const coordinates = extractCoordinates(normalizedCity);
+      if (coordinates) {
+        setLocation({
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          city: t('pinned_location'),
+        });
+        setCitySearch('');
+        setError(null);
+        return;
+      }
+
       const candidates = Array.from(new Set([
         normalizedCity,
         `${normalizedCity}, Morocco`,
@@ -379,6 +444,20 @@ export default function App() {
     }
   };
 
+  const updatePrayerOffset = (name: SalatName, delta: number) => {
+    setPrayerOffsets((prev) => {
+      const nextValue = Math.max(-30, Math.min(30, prev[name] + delta));
+      return {
+        ...prev,
+        [name]: nextValue,
+      };
+    });
+  };
+
+  const resetPrayerOffsets = () => {
+    setPrayerOffsets(DEFAULT_PRAYER_OFFSETS);
+  };
+
   // Fetch Prayer Times
   useEffect(() => {
     if (!location) return;
@@ -386,11 +465,8 @@ export default function App() {
     const fetchTimes = async () => {
       try {
         const date = format(new Date(), 'dd-MM-yyyy');
-        // For Morocco, we use a specific approach or the closest method if not available
-        // Aladhan method 3 is MWL, method 99 is a placeholder for our logic
-        const actualMethod = method === 99 ? 3 : method; 
-        
-        const url = `https://api.aladhan.com/v1/timings/${date}?latitude=${location.latitude}&longitude=${location.longitude}&method=${actualMethod}`;
+
+        const url = `https://api.aladhan.com/v1/timings/${date}?latitude=${location.latitude}&longitude=${location.longitude}&method=${method}`;
         const response = await fetch(url);
         const data = await response.json();
         
@@ -405,30 +481,37 @@ export default function App() {
     };
 
     fetchTimes();
-  }, [location, method]);
+  }, [location]);
 
   // Calculate Current and Next Prayer
-  const { currentPrayer, nextPrayer, countdown, activePrayer } = useMemo(() => {
-    if (!times) return { currentPrayer: null, nextPrayer: null, countdown: null, activePrayer: null };
+  const { currentPrayer, nextPrayer, countdown, activePrayer, nextPrayerAt } = useMemo(() => {
+    if (!times) return { currentPrayer: null, nextPrayer: null, countdown: null, activePrayer: null, nextPrayerAt: null };
 
     const now = currentTime;
     const todayStr = format(now, 'yyyy-MM-dd');
+
+    const parseApiTime = (name: SalatName, value: string) => {
+      // Aladhan may append timezone text like "05:21 (+01)"; keep only HH:mm.
+      const normalized = normalizeApiTime(value);
+      const base = parse(`${todayStr} ${normalized}`, 'yyyy-MM-dd HH:mm', new Date());
+      return addMinutes(base, prayerOffsets[name]);
+    };
     
-    const prayerDates = PRAYER_NAMES.map(name => {
+    const salatDates = SALAT_NAMES.map(name => {
       const timeStr = times[name];
       return {
         name,
-        date: parse(`${todayStr} ${timeStr}`, 'yyyy-MM-dd HH:mm', new Date())
+        date: parseApiTime(name, timeStr)
       };
     });
 
-    let current: PrayerName | null = null;
-    let next: PrayerName | null = null;
+    let current: SalatName | null = null;
+    let next: SalatName | null = null;
 
-    for (let i = 0; i < prayerDates.length; i++) {
-      if (isBefore(now, prayerDates[i].date)) {
-        next = prayerDates[i].name;
-        current = i === 0 ? 'Isha' : PRAYER_NAMES[i - 1]; // If before Fajr, current is Isha of yesterday
+    for (let i = 0; i < salatDates.length; i++) {
+      if (isBefore(now, salatDates[i].date)) {
+        next = salatDates[i].name;
+        current = i === 0 ? 'Isha' : SALAT_NAMES[i - 1]; // If before Fajr, current is Isha of yesterday
         break;
       }
     }
@@ -439,13 +522,12 @@ export default function App() {
     }
 
     // Highlight a prayer only briefly after its start time.
-    const active = prayerDates.find(({ name, date }) => {
-      if (name === 'Sunrise') return false;
+    const active = salatDates.find(({ date }) => {
       return !isBefore(now, date) && isBefore(now, addMinutes(date, 30));
     })?.name || null;
 
     // Countdown to next. After Isha, roll next Fajr to tomorrow.
-    let nextDate = prayerDates.find(p => p.name === next)?.date || addMinutes(prayerDates[0].date, 24 * 60);
+    let nextDate = salatDates.find(p => p.name === next)?.date || addMinutes(salatDates[0].date, 24 * 60);
     if (!isAfter(nextDate, now)) {
       nextDate = addMinutes(nextDate, 24 * 60);
     }
@@ -456,17 +538,156 @@ export default function App() {
     const s = diff % 60;
     const countdownStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 
-    return { currentPrayer: current, nextPrayer: next, countdown: countdownStr, activePrayer: active };
-  }, [times, currentTime]);
+    return { currentPrayer: current, nextPrayer: next, countdown: countdownStr, activePrayer: active, nextPrayerAt: nextDate };
+  }, [times, currentTime, normalizeApiTime, prayerOffsets]);
+
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  const syncPushSubscription = useCallback(async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || Notification.permission !== 'granted') {
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const keyResponse = await fetch('/api/push/vapid-public-key');
+    if (!keyResponse.ok) {
+      throw new Error('Unable to fetch VAPID public key');
+    }
+
+    const { publicKey } = await keyResponse.json() as { publicKey: string };
+    const applicationServerKey = urlBase64ToUint8Array(publicKey);
+
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+    }
+
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        subscription,
+        config: {
+          location,
+          method,
+          prayerOffsets,
+          language: i18n.language,
+          notificationsEnabled: true,
+        },
+      }),
+    });
+  }, [i18n.language, location, method, prayerOffsets]);
 
   // Notifications
+  const updatePinnedCountdownNotification = useCallback(async () => {
+    if (!notificationsEnabled || !nextPrayer || !countdown || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification(t('app_name'), {
+      body: `${t('next_prayer')}: ${t(nextPrayer.toLowerCase())} - ${countdown}`,
+      tag: PINNED_COUNTDOWN_TAG,
+      requireInteraction: true,
+      silent: true,
+    });
+  }, [countdown, nextPrayer, notificationsEnabled, t]);
+
   const requestNotifications = useCallback(async () => {
     if (!("Notification" in window)) return;
     const permission = await Notification.requestPermission();
     if (permission === "granted") {
       setNotificationsEnabled(true);
+
+      try {
+        await syncPushSubscription();
+      } catch (err) {
+        console.error('Failed to subscribe for web push notifications', err);
+      }
+
+      if ('serviceWorker' in navigator) {
+        try {
+          const registration = await navigator.serviceWorker.ready;
+          const periodicSyncManager = (registration as ServiceWorkerRegistration & { periodicSync?: { register: (tag: string, options?: { minInterval?: number }) => Promise<void> } }).periodicSync;
+          if (periodicSyncManager) {
+            await periodicSyncManager.register('prayer-check', { minInterval: 15 * 60 * 1000 });
+          }
+        } catch (err) {
+          console.error('Failed to register periodic prayer checks', err);
+        }
+      }
     }
-  }, []);
+  }, [syncPushSubscription]);
+
+  useEffect(() => {
+    if (!notificationsEnabled || !nextPrayer || !countdown || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    updatePinnedCountdownNotification().catch((err) => {
+      console.error('Failed to update pinned countdown notification', err);
+    });
+
+    const interval = window.setInterval(() => {
+      updatePinnedCountdownNotification().catch((err) => {
+        console.error('Failed to refresh pinned countdown notification', err);
+      });
+    }, 60_000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [countdown, nextPrayer, notificationsEnabled, updatePinnedCountdownNotification]);
+
+  useEffect(() => {
+    if (notificationsEnabled || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    navigator.serviceWorker.ready.then(async (registration) => {
+      const activePinned = await registration.getNotifications({ tag: PINNED_COUNTDOWN_TAG });
+      activePinned.forEach((item) => item.close());
+    }).catch((err) => {
+      console.error('Failed to clear pinned countdown notification', err);
+    });
+  }, [notificationsEnabled]);
+
+  useEffect(() => {
+    if (!notificationsEnabled || !location || !('serviceWorker' in navigator)) return;
+
+    syncPushSubscription().catch((err) => {
+      console.error('Failed to sync web push subscription', err);
+    });
+
+    navigator.serviceWorker.ready.then((registration) => {
+      registration.active?.postMessage({
+        type: 'PRAYER_CONFIG',
+        payload: {
+          location,
+          method,
+          prayerOffsets,
+          language: i18n.language,
+          notificationsEnabled,
+        },
+      });
+    }).catch((err) => {
+      console.error('Failed to send prayer config to service worker', err);
+    });
+  }, [i18n.language, location, method, notificationsEnabled, prayerOffsets, syncPushSubscription]);
 
   const toggleLanguage = () => {
     const langs = ['fr', 'ar', 'en'];
@@ -685,7 +906,7 @@ export default function App() {
               <PrayerCard
                 key={name}
                 name={name}
-                time={times[name]}
+                time={getAdjustedPrayerTime(name, times[name])}
                 label={t(name.toLowerCase())}
                 isCurrent={activePrayer === name}
                 isNext={nextPrayer === name}
@@ -727,27 +948,6 @@ export default function App() {
               </div>
 
               <div className="space-y-8">
-                <div>
-                  <label className="text-[10px] uppercase tracking-widest font-bold opacity-50 block mb-4">
-                    {t('method')}
-                  </label>
-                  <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                    {CALC_METHODS.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => setMethod(m.id)}
-                        className={cn(
-                          "text-left px-4 py-3 rounded-2xl text-sm transition-all",
-                          method === m.id 
-                            ? "bg-[#5A5A40] text-white" 
-                            : "bg-white border border-[#5A5A40]/10 hover:border-[#5A5A40]/30"
-                        )}
-                      >
-                        {m.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
 
                 <div>
                   <label className="text-[10px] uppercase tracking-widest font-bold opacity-50 block mb-4">
@@ -776,6 +976,44 @@ export default function App() {
                     >
                       {t('location_mode_manual')}
                     </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <label className="text-[10px] uppercase tracking-widest font-bold opacity-50 block">
+                      {t('prayer_adjustments')}
+                    </label>
+                    <button
+                      onClick={resetPrayerOffsets}
+                      className="text-[10px] uppercase tracking-wider font-bold underline underline-offset-4"
+                    >
+                      {t('reset')}
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {SALAT_NAMES.map((name) => (
+                      <div key={name} className="flex items-center justify-between bg-white border border-[#5A5A40]/10 rounded-xl px-3 py-2">
+                        <span className="text-xs font-bold">{t(name.toLowerCase())}</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => updatePrayerOffset(name, -1)}
+                            className="w-7 h-7 rounded-lg bg-[#5A5A40]/10 text-sm font-bold"
+                          >
+                            -
+                          </button>
+                          <span className="text-xs font-bold min-w-14 text-center">
+                            {prayerOffsets[name] > 0 ? `+${prayerOffsets[name]}` : prayerOffsets[name]} {t('minute_short')}
+                          </span>
+                          <button
+                            onClick={() => updatePrayerOffset(name, 1)}
+                            className="w-7 h-7 rounded-lg bg-[#5A5A40]/10 text-sm font-bold"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
