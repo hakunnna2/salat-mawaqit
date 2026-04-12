@@ -52,6 +52,7 @@ const LOCATION_MODE_STORAGE_KEY = 'salat_mawaqit_location_mode';
 const PRAYER_OFFSETS_STORAGE_KEY = 'salat_mawaqit_prayer_offsets';
 const PINNED_COUNTDOWN_TAG = 'next-prayer-countdown';
 const DEFAULT_FALLBACK_LOCATION: LocationData = { latitude: 33.5731, longitude: -7.5898, city: 'Casablanca' };
+const PUSH_API_BASE = (import.meta.env.VITE_PUSH_API_BASE || '').replace(/\/$/, '');
 const DEFAULT_PRAYER_OFFSETS: PrayerOffsets = {
   Fajr: 0,
   Dhuhr: 0,
@@ -558,7 +559,7 @@ export default function App() {
     }
 
     const registration = await navigator.serviceWorker.ready;
-    const keyResponse = await fetch('/api/push/vapid-public-key');
+    const keyResponse = await fetch(`${PUSH_API_BASE}/api/push/vapid-public-key`);
     if (!keyResponse.ok) {
       throw new Error('Unable to fetch VAPID public key');
     }
@@ -574,7 +575,7 @@ export default function App() {
       });
     }
 
-    await fetch('/api/push/subscribe', {
+    await fetch(`${PUSH_API_BASE}/api/push/subscribe`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

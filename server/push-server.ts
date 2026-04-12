@@ -191,8 +191,9 @@ async function sendDuePrayerNotifications() {
 
 const app = express();
 app.use(express.json());
+const allowedOrigin = process.env.CORS_ORIGIN || '*';
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') {
@@ -204,6 +205,10 @@ app.use((req, res, next) => {
 
 const vapid = getVapidKeys();
 webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, service: 'salat-push-server' });
+});
 
 app.get('/api/push/vapid-public-key', (_req, res) => {
   res.json({ publicKey: vapid.publicKey });
@@ -251,7 +256,7 @@ app.post('/api/push/unsubscribe', (req, res) => {
   res.json({ ok: true });
 });
 
-const port = Number(process.env.PUSH_SERVER_PORT || 8787);
+const port = Number(process.env.PORT || process.env.PUSH_SERVER_PORT || 8787);
 app.listen(port, () => {
   console.log(`Push server running on http://localhost:${port}`);
 });
