@@ -40,6 +40,7 @@ interface LocationData {
 type LocationPermissionState = 'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown';
 type LocationMode = 'auto' | 'manual';
 type PrayerOffsets = Record<SalatName, number>;
+type ActiveView = 'times' | 'qibla';
 
 // --- Constants ---
 const PRAYER_NAMES = ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'] as const;
@@ -60,6 +61,7 @@ const DEFAULT_PRAYER_OFFSETS: PrayerOffsets = {
   Maghrib: 0,
   Isha: 0,
 };
+const KAABA_COORDS = { latitude: 21.4225, longitude: 39.8262 };
 
 // --- Components ---
 
@@ -162,6 +164,10 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(Notification.permission === 'granted');
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [activeView, setActiveView] = useState<ActiveView>('times');
+  const [compassEnabled, setCompassEnabled] = useState(false);
+  const [compassHeading, setCompassHeading] = useState<number | null>(null);
+  const [compassError, setCompassError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [citySearch, setCitySearch] = useState('');
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -542,6 +548,95 @@ export default function App() {
     return { currentPrayer: current, nextPrayer: next, countdown: countdownStr, activePrayer: active, nextPrayerAt: nextDate };
   }, [times, currentTime, normalizeApiTime, prayerOffsets]);
 
+  const qiblaInfo = useMemo(() => {
+    if (!location) {
+      return null;
+    }
+
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const toDeg = (rad: number) => (rad * 180) / Math.PI;
+
+    const lat1 = toRad(location.latitude);
+    const lon1 = toRad(location.longitude);
+    const lat2 = toRad(KAABA_COORDS.latitude);
+    const lon2 = toRad(KAABA_COORDS.longitude);
+    const deltaLon = lon2 - lon1;
+
+    const y = Math.sin(deltaLon);
+    const x = Math.cos(lat1) * Math.tan(lat2) - Math.sin(lat1) * Math.cos(deltaLon);
+    const bearing = (toDeg(Math.atan2(y, x)) + 360) % 360;
+
+    const dLat = lat2 - lat1;
+    const dLon = lon2 - lon1;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distanceKm = 6371 * c;
+
+    return {
+      bearing: Math.round(bearing),
+      distanceKm: Math.round(distanceKm),
+    };
+  }, [location]);
+
+  const requestCompass = useCallback(async () => {
+    if (!('DeviceOrientationEvent' in window)) {
+      setCompassError(t('compass_unsupported'));
+      return;
+    }
+
+    try {
+      const deviceOrientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+        requestPermission?: () => Promise<PermissionState>;
+      };
+
+      if (typeof deviceOrientation.requestPermission === 'function') {
+        const permission = await deviceOrientation.requestPermission();
+        if (permission !== 'granted') {
+          setCompassEnabled(false);
+          setCompassError(t('compass_permission_denied'));
+          return;
+        }
+      }
+
+      setCompassError(null);
+      setCompassEnabled(true);
+    } catch (err) {
+      console.error('Failed to enable compass', err);
+      setCompassEnabled(false);
+      setCompassError(t('compass_permission_denied'));
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (!compassEnabled || activeView !== 'qibla') {
+      return;
+    }
+
+    const updateHeading = (event: DeviceOrientationEvent) => {
+      let heading: number | null = null;
+
+      if (typeof (event as DeviceOrientationEvent & { webkitCompassHeading?: number }).webkitCompassHeading === 'number') {
+        heading = (event as DeviceOrientationEvent & { webkitCompassHeading?: number }).webkitCompassHeading ?? null;
+      } else if (typeof event.alpha === 'number') {
+        heading = 360 - event.alpha;
+      }
+
+      if (heading !== null && Number.isFinite(heading)) {
+        setCompassHeading((heading + 360) % 360);
+      }
+    };
+
+    window.addEventListener('deviceorientationabsolute', updateHeading as EventListener);
+    window.addEventListener('deviceorientation', updateHeading as EventListener);
+
+    return () => {
+      window.removeEventListener('deviceorientationabsolute', updateHeading as EventListener);
+      window.removeEventListener('deviceorientation', updateHeading as EventListener);
+    };
+  }, [activeView, compassEnabled]);
+
   const urlBase64ToUint8Array = (base64String: string) => {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -785,6 +880,8 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-6 py-8 pb-24">
+        {activeView === 'times' && (
+          <>
         {/* Hero Section */}
         <section className="mb-12 text-center">
           <motion.div
@@ -921,6 +1018,64 @@ export default function App() {
             </div>
           )}
         </section>
+          </>
+        )}
+
+        {activeView === 'qibla' && (
+          <section className="space-y-6">
+            <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-[#5A5A40]/5 text-center">
+              <p className="text-xs uppercase tracking-[0.2em] font-bold mb-2 opacity-50">
+                {t('qibla_direction')}
+              </p>
+
+              {qiblaInfo ? (
+                <>
+                  <div className="flex items-center justify-center gap-2 mb-4">
+                    <button
+                      onClick={requestCompass}
+                      className={cn(
+                        "px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all",
+                        compassEnabled ? "bg-[#5A5A40] text-white" : "bg-[#5A5A40]/10 text-[#5A5A40]"
+                      )}
+                    >
+                      {compassEnabled ? t('compass_on') : t('compass_enable')}
+                    </button>
+                    {compassHeading !== null && (
+                      <span className="text-[10px] uppercase tracking-widest opacity-50 font-bold">
+                        {t('compass_heading')}: {Math.round(compassHeading)} deg
+                      </span>
+                    )}
+                  </div>
+
+                  {compassError && (
+                    <div className="text-xs text-red-600 mb-4">
+                      {compassError}
+                    </div>
+                  )}
+
+                  <div className="mx-auto w-56 h-56 rounded-full border-4 border-[#5A5A40]/10 relative flex items-center justify-center mb-6">
+                    <div className="absolute top-3 text-[10px] font-bold opacity-40">N</div>
+                    <motion.div
+                      animate={{ rotate: qiblaInfo.bearing - (compassHeading ?? 0) }}
+                      transition={{ type: 'spring', stiffness: 120, damping: 18 }}
+                      className="w-0 h-0 border-l-[14px] border-r-[14px] border-b-[90px] border-l-transparent border-r-transparent border-b-[#5A5A40]"
+                    />
+                    <div className="absolute w-3 h-3 rounded-full bg-[#5A5A40]" />
+                  </div>
+
+                  <p className="text-sm opacity-70 mb-1">
+                    {t('qibla_bearing')}: <span className="font-bold text-[#5A5A40]">{qiblaInfo.bearing} deg</span>
+                  </p>
+                  <p className="text-sm opacity-70">
+                    {t('qibla_distance')}: <span className="font-bold text-[#5A5A40]">{qiblaInfo.distanceKm} km</span>
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm opacity-70">{t('qibla_need_location')}</p>
+              )}
+            </div>
+          </section>
+        )}
       </main>
 
       {/* Settings Modal */}
@@ -1070,20 +1225,32 @@ export default function App() {
       {/* Mobile Navigation / Tab Bar (Optional) */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t border-[#5A5A40]/10 px-8 py-4 sm:hidden">
         <div className="max-w-md mx-auto flex justify-around items-center">
-          <button className="flex flex-col items-center gap-1 text-[#5A5A40]">
+          <button
+            onClick={() => setActiveView('times')}
+            className={cn(
+              "flex flex-col items-center gap-1",
+              activeView === 'times' ? "text-[#5A5A40]" : "opacity-30"
+            )}
+          >
             <ClockIcon size={24} />
-            <span className="text-[10px] font-bold uppercase tracking-tighter">Times</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">{t('times_tab')}</span>
           </button>
-          <button className="flex flex-col items-center gap-1 opacity-30">
+          <button
+            onClick={() => setActiveView('qibla')}
+            className={cn(
+              "flex flex-col items-center gap-1",
+              activeView === 'qibla' ? "text-[#5A5A40]" : "opacity-30"
+            )}
+          >
             <MapPin size={24} />
-            <span className="text-[10px] font-bold uppercase tracking-tighter">Qibla</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">{t('qibla_tab')}</span>
           </button>
           <button 
             onClick={() => setIsSettingsOpen(true)}
             className="flex flex-col items-center gap-1 opacity-30"
           >
             <SettingsIcon size={24} />
-            <span className="text-[10px] font-bold uppercase tracking-tighter">Settings</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">{t('settings_tab')}</span>
           </button>
         </div>
       </nav>
