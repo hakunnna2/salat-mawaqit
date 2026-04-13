@@ -151,12 +151,13 @@ async function sendDuePrayerNotifications() {
       let comingPrayer: { name: SalatName; prayerDate: Date; minutesLeft: number } | null = null;
       const reminderMinutes = Math.max(1, Number(config.reminderMinutes || 10));
       const reminderMs = reminderMinutes * 60_000;
+      const dueGraceMs = Math.max(5, reminderMinutes) * 60_000;
 
       for (const prayerName of SALAT_NAMES) {
         const basePrayerTime = parseApiTime(timings[prayerName], now);
         const adjusted = new Date(basePrayerTime.getTime() + (config.prayerOffsets?.[prayerName] || 0) * 60_000);
-        const diffMs = Math.abs(now.getTime() - adjusted.getTime());
         const msUntilPrayer = adjusted.getTime() - now.getTime();
+        const msSincePrayer = now.getTime() - adjusted.getTime();
 
         if (!comingPrayer && msUntilPrayer > 0 && msUntilPrayer <= reminderMs) {
           comingPrayer = {
@@ -166,7 +167,7 @@ async function sendDuePrayerNotifications() {
           };
         }
 
-        if (diffMs <= 60_000) {
+        if (msSincePrayer >= 0 && msSincePrayer <= dueGraceMs) {
           duePrayer = { name: prayerName, prayerDate: adjusted };
           break;
         }

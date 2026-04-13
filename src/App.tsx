@@ -31,6 +31,19 @@ interface PrayerTimes {
   Isha: string;
 }
 
+interface CachedPrayerTimes {
+  date: string;
+  location: {
+    latitude: number;
+    longitude: number;
+  };
+  method: number;
+  timings: PrayerTimes;
+  updatedAt: number;
+}
+
+type TimesFreshness = 'live' | 'saved-today' | 'old-cache' | 'unknown';
+
 interface LocationData {
   latitude: number;
   longitude: number;
@@ -60,6 +73,8 @@ const HABOUS_METHOD_ID = 21;
 const LOCATION_STORAGE_KEY = 'salat_mawaqit_location';
 const LOCATION_MODE_STORAGE_KEY = 'salat_mawaqit_location_mode';
 const PRAYER_OFFSETS_STORAGE_KEY = 'salat_mawaqit_prayer_offsets';
+const PRAYER_TIMES_CACHE_KEY = 'salat_mawaqit_prayer_times_cache';
+const PRAYER_TIMES_CACHE_MAX_ITEMS = 45;
 const PINNED_COUNTDOWN_TAG = 'next-prayer-countdown';
 const DEFAULT_FALLBACK_LOCATION: LocationData = { latitude: 33.5731, longitude: -7.5898, city: 'Casablanca' };
 const PUSH_API_BASE = (import.meta.env.VITE_PUSH_API_BASE || '').replace(/\/$/, '');
@@ -186,6 +201,8 @@ export default function App() {
   const [isCitySearchLoading, setIsCitySearchLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [isDetecting, setIsDetecting] = useState(false);
+  const [timesFreshness, setTimesFreshness] = useState<TimesFreshness>('unknown');
+  const [timesUpdatedAt, setTimesUpdatedAt] = useState<number | null>(null);
 
   // Check for widget mode
   const isWidgetMode = useMemo(() => {
@@ -256,6 +273,72 @@ export default function App() {
   const normalizeApiTime = useCallback((value: string) => {
     return value.split(' ')[0]?.trim() || value;
   }, []);
+
+  const getCachedPrayerTimes = useCallback((): CachedPrayerTimes[] => {
+    try {
+      const raw = localStorage.getItem(PRAYER_TIMES_CACHE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as CachedPrayerTimes[];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed.filter((entry) => {
+        return (
+          !!entry?.timings &&
+          typeof entry?.method === 'number' &&
+          typeof entry?.date === 'string' &&
+          typeof entry?.updatedAt === 'number' &&
+          typeof entry?.location?.latitude === 'number' &&
+          typeof entry?.location?.longitude === 'number'
+        );
+      });
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const saveCachedPrayerTimes = useCallback((cache: CachedPrayerTimes) => {
+    try {
+      const existing = getCachedPrayerTimes();
+      const sameSpot = (entry: CachedPrayerTimes) => {
+        const latDiff = Math.abs(entry.location.latitude - cache.location.latitude);
+        const lonDiff = Math.abs(entry.location.longitude - cache.location.longitude);
+        return latDiff < 0.001 && lonDiff < 0.001;
+      };
+
+      const merged = [
+        cache,
+        ...existing.filter(
+          (entry) => !(entry.date === cache.date && entry.method === cache.method && sameSpot(entry))
+        ),
+      ].slice(0, PRAYER_TIMES_CACHE_MAX_ITEMS);
+
+      localStorage.setItem(PRAYER_TIMES_CACHE_KEY, JSON.stringify(merged));
+    } catch (err) {
+      console.error('Failed to save cached prayer times', err);
+    }
+  }, [getCachedPrayerTimes]);
+
+  const getDataFreshnessLabel = useCallback(() => {
+    if (timesFreshness === 'live') return 'Live';
+    if (timesFreshness === 'saved-today') return 'Saved today';
+    if (timesFreshness === 'old-cache') return 'Old cache';
+    return 'No data';
+  }, [timesFreshness]);
+
+  const getDataFreshnessClasses = useCallback(() => {
+    if (timesFreshness === 'live') {
+      return 'bg-emerald-100 text-emerald-700';
+    }
+    if (timesFreshness === 'saved-today') {
+      return 'bg-amber-100 text-amber-700';
+    }
+    if (timesFreshness === 'old-cache') {
+      return 'bg-orange-100 text-orange-700';
+    }
+    return 'bg-slate-100 text-slate-600';
+  }, [timesFreshness]);
 
   const getAdjustedPrayerTime = useCallback((name: PrayerName, value: string) => {
     const normalized = normalizeApiTime(value);
@@ -571,9 +654,42 @@ export default function App() {
     if (!location) return;
 
     const fetchTimes = async () => {
-      try {
-        const date = format(new Date(), 'dd-MM-yyyy');
+      const date = format(new Date(), 'dd-MM-yyyy');
+      const fallbackToCache = () => {
+        const cachedItems = getCachedPrayerTimes();
+        if (cachedItems.length === 0) {
+          return false;
+        }
 
+        const compatible = cachedItems.filter((entry) => {
+          const sameMethod = entry.method === method;
+          const latDiff = Math.abs(entry.location.latitude - location.latitude);
+          const lonDiff = Math.abs(entry.location.longitude - location.longitude);
+          const sameArea = latDiff < 0.25 && lonDiff < 0.25;
+          return sameMethod && sameArea;
+        });
+
+        if (compatible.length === 0) {
+          return false;
+        }
+
+        const sameDay = compatible.find((entry) => entry.date === date);
+        const best = sameDay || compatible.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+
+        setTimes(best.timings);
+        setTimesUpdatedAt(best.updatedAt);
+        setTimesFreshness(best.date === date ? 'saved-today' : 'old-cache');
+
+        if (best.date === date) {
+          setError(isOffline ? 'Offline mode: showing saved prayer times' : 'Showing last saved prayer times');
+        } else {
+          setError(`Offline mode: showing saved prayer times from ${best.date}`);
+        }
+
+        return true;
+      };
+
+      try {
         const url = `https://api.aladhan.com/v1/timings/${date}?latitude=${location.latitude}&longitude=${location.longitude}&method=${method}`;
         const response = await fetch(url);
         const data = await response.json();
@@ -581,15 +697,41 @@ export default function App() {
         if (data.code === 200) {
           setTimes(data.data.timings);
           setError(null);
+          setTimesFreshness('live');
+          setTimesUpdatedAt(Date.now());
+          saveCachedPrayerTimes({
+            date,
+            location: {
+              latitude: location.latitude,
+              longitude: location.longitude,
+            },
+            method,
+            timings: data.data.timings as PrayerTimes,
+            updatedAt: Date.now(),
+          });
+          return;
+        }
+
+        if (!fallbackToCache()) {
+          setError('Failed to fetch prayer times');
         }
       } catch (err) {
         console.error(err);
-        setError("Failed to fetch prayer times");
+        if (!fallbackToCache()) {
+          setError('Failed to fetch prayer times');
+        }
       }
     };
 
     fetchTimes();
-  }, [location]);
+  }, [getCachedPrayerTimes, isOffline, location, method, saveCachedPrayerTimes]);
+
+  const lastSyncText = useMemo(() => {
+    if (!timesUpdatedAt) {
+      return 'Last sync: unavailable';
+    }
+    return `Last sync: ${format(new Date(timesUpdatedAt), 'EEE d MMM, HH:mm')}`;
+  }, [timesUpdatedAt]);
 
   // Calculate Current and Next Prayer
   const { currentPrayer, nextPrayer, countdown, activePrayer, nextPrayerAt } = useMemo(() => {
@@ -998,6 +1140,15 @@ export default function App() {
             <p className="text-sm opacity-60 mt-1">
               {format(currentTime, 'EEEE, d MMMM yyyy')}
             </p>
+            <div className="mt-4 flex flex-col items-center gap-2">
+              <span className={cn(
+                "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide",
+                getDataFreshnessClasses()
+              )}>
+                {getDataFreshnessLabel()}
+              </span>
+              <p className="text-[11px] opacity-60 font-medium">{lastSyncText}</p>
+            </div>
           </motion.div>
 
           {nextPrayer && (

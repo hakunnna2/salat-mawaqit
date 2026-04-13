@@ -67,6 +67,7 @@ async function checkPrayerNotifications() {
     const timings = data.data.timings;
     const reminderMinutes = Math.max(1, Number(config.reminderMinutes || 10));
     const reminderMs = reminderMinutes * 60 * 1000;
+    const dueGraceMs = Math.max(5, reminderMinutes) * 60 * 1000;
 
     for (const name of SALAT_NAMES) {
       const offset = Number(config.prayerOffsets?.[name] || 0);
@@ -74,6 +75,7 @@ async function checkPrayerNotifications() {
       prayerDate.setMinutes(prayerDate.getMinutes() + offset);
 
       const msUntilPrayer = prayerDate.getTime() - now.getTime();
+      const msSincePrayer = now.getTime() - prayerDate.getTime();
       if (msUntilPrayer > 0 && msUntilPrayer <= reminderMs) {
         const comingKey = `${prayerDate.toISOString().slice(0, 16)}-${name}-coming`;
         const lastComing = await readMeta('last-prayer-coming-notification');
@@ -90,8 +92,7 @@ async function checkPrayerNotifications() {
         }
       }
 
-      const diff = Math.abs(now.getTime() - prayerDate.getTime());
-      if (diff > 60 * 1000) {
+      if (msSincePrayer < 0 || msSincePrayer > dueGraceMs) {
         continue;
       }
 
@@ -191,7 +192,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'PRAYER_CONFIG') {
-    event.waitUntil(writeMeta('prayer-config', event.data.payload));
+    event.waitUntil(
+      writeMeta('prayer-config', event.data.payload).then(() => checkPrayerNotifications())
+    );
   }
 });
 
